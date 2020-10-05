@@ -1,19 +1,19 @@
 #! /usr/bin/env python3
 #
 
-DESCRIPTION = "ps-host: Basic tools for astrophysics and cosmology"
+DESCRIPTION = "pshost: Basic tools for astrophysics and cosmology"
 LONG_DESCRIPTION = """\
 This module gathers the basic tools one usually needs for astrophysics and
 cosmology usage.
 """
 
-DISTNAME = 'ps-host'
-AUTHOR = 'ps-host Developers'
+DISTNAME = 'pshost'
+AUTHOR = 'pshost Developers'
 MAINTAINER = 'Nora Nicolas'
 MAINTAINER_EMAIL = 'nora.nicolas@ens-lyon.org'
-URL = 'https://github.com/Nora-n/ps-host/'
+URL = 'https://github.com/Nora-n/pshost/'
 LICENSE = 'BSD (3-clause)'
-DOWNLOAD_URL = 'https://github.com/Nora-n/ps-host/'
+DOWNLOAD_URL = 'https://github.com/Nora-n/pshost/'
 VERSION = '0.1'
 
 try:
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     else:
         # This should be updated if new submodules are added
         packages = [
-            'ps-host']
+            'pshost']
 
     setup(name=DISTNAME,
           author=AUTHOR,

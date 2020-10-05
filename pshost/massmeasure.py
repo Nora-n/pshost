@@ -5,10 +5,13 @@
 # import pandas as pd
 import sep
 import numpy as np
-import matplotlib.pyplot as mpl
+import matplotlib.pyplot as plt
 
 from matplotlib.patches import Ellipse
+from astrobject.baseobject import get_target
 from astrobject.utils.tools import flux_to_mag
+from astrobject.photometry import get_photopoint
+from astrobject.collections.photodiagnostics import get_massestimator
 
 # PanSTARRS zero point according to
 # https://coolwiki.ipac.caltech.edu/index.php/
@@ -18,6 +21,13 @@ ps1_zp = {'g': 0.4810,
           'i': 0.7520,
           'z': 0.8660,
           'y': 0.9620}
+
+# From astrobject/instruments/panstarrs.py
+PANSTARRS_INFO = {'g': {'lbda': 4866.457871, 'ABmag0': 25.0, 'band': 'ps1.g'},
+                  'r': {'lbda': 6214.623038, 'ABmag0': 25.0, 'band': 'ps1.r'},
+                  'i': {'lbda': 7544.570357, 'ABmag0': 25.0, 'band': 'ps1.i'},
+                  'z': {'lbda': 8679.482571, 'ABmag0': 25.0, 'band': 'ps1.z'},
+                  'y': {'lbda': 9633.284241, 'ABmag0': 25.0, 'band': 'ps1.y'}}
 
 # Pymage
 try:
@@ -58,11 +68,11 @@ class MassMeasure(object):
     #                               Initial                               #
     # =================================================================== #
 
-    def __init__(self, ra, dec, cutout=None):
+    def __init__(self, ra, dec, z, cutout=None):
         '''
-        Sets the object's ra, dec coordinates and instantiates a PS1Target
-        object from `pymage.panstarrs`, downloading the needed cutout if
-        not given as an entry parameter.
+        Sets the object's ra, dec coordinates and redshift,
+        then instantiates a PS1Target object from `pymage.panstarrs`,
+        downloading the needed cutout if not given as an entry parameter.
         '''
         if not _HAS_PYMAGE:
             raise ImportError('This method needs pymage: `pip install pymage`')
@@ -70,11 +80,13 @@ class MassMeasure(object):
         self.target = panstarrs.PS1Target.from_coord(ra, dec)
         self.ra = self.target.coordinate.ra.deg
         self.dec = self.target.coordinate.dec.deg
+        self.z = z
         if cutout is None:
             self.target.download_cutout(load_weight=True)
         else:
             self.target._cutout = cutout
         self._cutout = self.target.imgcutout
+        self.bands = list(self.cutout.keys())
         self.x, self.y = self.target.imgcutout['r'].coords_to_pixel(
             self.ra, self.dec)
         sep_obj = self.target.sep_extract(returnobjects=True)
@@ -106,7 +118,7 @@ class MassMeasure(object):
 
     def count_to_flux(self, count):
         '''Gives a flux from given count'''
-        if not hasattr(self, _cutout):
+        if not hasattr(self, '_cutout'):
             raise AttributeError(
                 "No cutout loaded yet. " +
                 "Run self.download() or set self._cutout")
@@ -130,75 +142,61 @@ class MassMeasure(object):
         hg_ind = np.argmin(DLR_list)
         self.hg_ellipse = self.ellipses[hg_ind]
 
-        bands = list(self.cutout.keys())
+        self.var_count = {band:
+                          self.target.imgcutout[band].weightimage.data**(-2)
+                          for band in self.bands}
+
         counts_res = [sep.sum_ellipse(self.cutout[band],
                                       self.hg_ellipse[0], self.hg_ellipse[1],
                                       self.hg_ellipse[2], self.hg_ellipse[3],
                                       self.hg_ellipse[4],
-                                      var=self.cutout[band])
-                      for band in bands]
+                                      var=self.var_count[band])
+                      for band in self.bands]
         self.hg_count = {band: [counts_res[band][0], counts_res[band][1]]
-                         for band in bands}
+                         for band in self.bands}
 
         self.hg_flux = {band: [self.count_to_flux(self.hg_count[band][0]),
                                self.count_to_flux(self.hg_count[band][1])]
-                        for band in bands}
+                        for band in self.bands}
 
-        self.hg_mag = {band: [flux_to_mag(self.hg_flux[band][0],
-                                          self.hg_flux[band][1],
-                                          zp=ps1_zp[band])[0],
-                              flux_to_mag(self.hg_flux[band][0],
-                                          self.hg_flux[band][1],
-                                          zp=ps1_zp[band])[1]]
-                       for band in bands}
+        self.var_flux = {band: self.hg_flux[band][-1]**2
+                         for band in self.bands}
+
+        self.hg_mag = {band: np.array(flux_to_mag(self.hg_flux[band][0],
+                                                  self.hg_flux[band][1],
+                                                  zp=ps1_zp[band]))
+                       for band in self.bands}
+
+        phtpt = {band: get_photopoint(self.hg_flux[band][0],
+                                      self.var_flux[band],
+                                      lbda=PANSTARRS_INFO[band]['ldba'],
+                                      bandname=PANSTARRS_INFO[band]['band'])
+                 for band in ['g', 'i']}
+        MassEstimate_obj = get_massestimator(photopoints=[phtpt['g'],
+                                                          phtpt['i']])
+        MassEstimate_obj.set_target(get_target(zcmb=self.z))
+        self.hg_mass = MassEstimate_obj.get_estimate()
 
     # ------------------------------------------------------------------- #
     #                               PLOTTER                               #
     # ------------------------------------------------------------------- #
 
-    def show(self, ax=None, band="r", show_coord=None,
-             source='sep', ellipse=True, ell_color="k",
-             coord_color="C1", scaleup=3, **kwargs):
+    def show(self, ax=None, band="r",
+             ellipse=True, ell_color='red'):
         """ """
-        if self.has_cutout():
-            img = self.cutout[band]
-            ax = img.show(ax=ax, show_sepobjects=False)['ax']
-            inpixel = True
-            has_img = True
-        elif ax is None:
-            fig = mpl.figure(figsize=[5, 5])
-            ax = fig.add_subplot(111)
-            inpixel = False
-            has_img = False
-
-        # - RA,Dec or x,y
-        if inpixel:
-            x, y = img.coords_to_pixel(
-                self.coordinate.ra.deg, self.coordinate.dec.deg)
+        fig = plt.figure(figsize=[5, 5])
+        if ax is not None:
+            ax = ax
         else:
-            x, y = self.coordinate.ra.deg, self.coordinate.dec.deg
+            ax = fig.add_axes([0.12, 0.12, 0.8, 0.8])
 
-        ax.scatter(x, y, **{**dict(marker="+", color='k', s=100), **kwargs})
+        self.cutout[band].show(show_sepobjects=True, logscale=False, ax=ax)
 
-        if ellipse:
-            x, y, a, b, t = self.get_nearest_ellipse(
-                source=source, inpixel=inpixel)
-            ax.add_patch(Ellipse([x, y],
-                                 2*a*scaleup, 2*b*scaleup,
-                                 t*units.rad.to("deg"),
-                                 facecolor="None", edgecolor=ell_color, lw=2))
-            if not has_img:
-                ax.scatter(x, y, marker=".", color=ell_color)
-                ax.set_xlim(x-3*a, x+3*a)
-                ax.set_ylim(y-3*a, y+3*a)
+        hg_patch = Ellipse([self.hg_ellipse[0], self.hg_ellipse[1]],
+                           self.hg_ellipse[2]*4, self.hg_ellipse[3]*4,
+                           self.hg_ellipse[4], color=ell_color)
 
-        if show_coord is not None:
-            if inpixel:
-                x, y = img.coords_to_pixel(*show_coord)
-            else:
-                x, y, = show_coord
-
-            ax.scatter(x, y, marker="x", color=pt_color, s=100)
+        ax.add_patch(hg_patch)
 
         return ax.figure
 
