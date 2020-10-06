@@ -4,3 +4,5 @@ dist/
 ps_host.egg-info/
 
 pshost.egg-info/
+
+build/

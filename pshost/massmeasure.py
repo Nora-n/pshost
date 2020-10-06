@@ -7,6 +7,8 @@ import sep
 import numpy as np
 import matplotlib.pyplot as plt
 
+from astropy import units
+# from pymage import panstarrs
 from matplotlib.patches import Ellipse
 from astrobject.baseobject import get_target
 from astrobject.utils.tools import flux_to_mag
@@ -46,20 +48,9 @@ except ImportError:
 class MassMeasure(object):
     '''
     Usage:
-    mm = MassMeasure(ra, dec)
-    mm.download()  # if necessary; else run mm._cutout = cutout
+    mm = MassMeasure(ra, dec, z, cutout=None)
 
-    # Optional
-    mm.show()
-
-    mm.get_ellipses()  # also defines the associated host galaxy
-                       # alternatively get HG with mm.get_hostgalaxy()
-
-    # Optional
-    mm.show()  # If ellipses have been extracted they are shown
-
-    mm.get_hostgalaxy()
-    mm.get_hostmass()
+    mm.get_hostgalaxy_params()
 
     # Optional:
     mm.test_pixels(n=100)'''
@@ -89,8 +80,8 @@ class MassMeasure(object):
         self.bands = list(self.cutout.keys())
         self.x, self.y = self.target.imgcutout['r'].coords_to_pixel(
             self.ra, self.dec)
-        sep_obj = self.target.sep_extract(returnobjects=True)
-        self.ellipses = sep_obj.get_ellipses_values().T
+        sep_obj = self.target.imgcutout['r'].sep_extract(returnobjects=True)
+        self.ellipses = sep_obj.get_ellipse_values().T
 
     # =================================================================== #
     #                               Methods                               #
@@ -146,12 +137,14 @@ class MassMeasure(object):
                           self.target.imgcutout[band].weightimage.data**(-2)
                           for band in self.bands}
 
-        counts_res = [sep.sum_ellipse(self.cutout[band],
-                                      self.hg_ellipse[0], self.hg_ellipse[1],
-                                      self.hg_ellipse[2], self.hg_ellipse[3],
-                                      self.hg_ellipse[4],
-                                      var=self.var_count[band])
-                      for band in self.bands]
+        counts_res = {band: sep.sum_ellipse(self.cutout[band].data,
+                                            self.hg_ellipse[0],
+                                            self.hg_ellipse[1],
+                                            self.hg_ellipse[2],
+                                            self.hg_ellipse[3],
+                                            self.hg_ellipse[4],
+                                            var=self.var_count[band])
+                      for band in self.bands}
         self.hg_count = {band: [counts_res[band][0], counts_res[band][1]]
                          for band in self.bands}
 
@@ -169,7 +162,7 @@ class MassMeasure(object):
 
         phtpt = {band: get_photopoint(self.hg_flux[band][0],
                                       self.var_flux[band],
-                                      lbda=PANSTARRS_INFO[band]['ldba'],
+                                      lbda=PANSTARRS_INFO[band]['lbda'],
                                       bandname=PANSTARRS_INFO[band]['band'])
                  for band in ['g', 'i']}
         MassEstimate_obj = get_massestimator(photopoints=[phtpt['g'],
@@ -177,12 +170,15 @@ class MassMeasure(object):
         MassEstimate_obj.set_target(get_target(zcmb=self.z))
         self.hg_mass = MassEstimate_obj.get_estimate()
 
+        return self.hg_mass
+
     # ------------------------------------------------------------------- #
     #                               PLOTTER                               #
     # ------------------------------------------------------------------- #
 
     def show(self, ax=None, band="r",
-             ellipse=True, ell_color='red'):
+             ellipse=True, scaleup=2.5,
+             ell_color=(1, 0, 0, 0.3)):
         """ """
         fig = plt.figure(figsize=[5, 5])
         if ax is not None:
@@ -192,13 +188,16 @@ class MassMeasure(object):
 
         self.cutout[band].show(show_sepobjects=True, logscale=False, ax=ax)
 
-        hg_patch = Ellipse([self.hg_ellipse[0], self.hg_ellipse[1]],
-                           self.hg_ellipse[2]*4, self.hg_ellipse[3]*4,
-                           self.hg_ellipse[4], color=ell_color)
+        if ellipse:
+            hg_patch = Ellipse([self.hg_ellipse[0], self.hg_ellipse[1]],
+                               2*self.hg_ellipse[2]*scaleup,
+                               2*self.hg_ellipse[3]*scaleup,
+                               self.hg_ellipse[4]*units.rad.to('deg'),
+                               color=ell_color)
 
-        ax.add_patch(hg_patch)
+            ax.add_patch(hg_patch)
 
-        return ax.figure
+        return fig
 
     # =================================================================== #
     #                              Properties                             #
@@ -218,38 +217,3 @@ class MassMeasure(object):
                 "No cutout loaded yet. " +
                 "Run self.download() or set self._cutout")
         return self._cutout
-
-    @property
-    def ellipse(self):
-        """ """
-        if not hasattr(self, "_ellipse") or self._ellipse is None:
-            self.derive_ellipse()
-        return self._ellipse
-
-    @property
-    def catdata(self):
-        """ """
-        if not hasattr(self, "_catdata"):
-            self._catdata = None
-        return self._catdata
-
-    @property
-    def _extended_cat_set(self):
-        """ """
-        if not hasattr(self, "_is_extended_cat_set"):
-            self._is_extended_cat_set = False
-        return self._is_extended_cat_set
-
-    @property
-    def sep(self):
-        """ """
-        if not hasattr(self, "_sep"):
-            self._sep = None
-        return self._sep
-
-    @property
-    def galcat(self):
-        """ """
-        if not hasattr(self, "_galcat"):
-            self._galcat = None
-        return self._galcat
