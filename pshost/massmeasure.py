@@ -59,7 +59,7 @@ class MassMeasure(object):
     #                               Initial                               #
     # =================================================================== #
 
-    def __init__(self, ra, dec, z, cutout=None):
+    def __init__(self, ra, dec, z, cutout=None, **kwargs):
         '''
         Sets the object's ra, dec coordinates and redshift,
         then instantiates a PS1Target object from `pymage.panstarrs`,
@@ -73,15 +73,32 @@ class MassMeasure(object):
         self.dec = self.target.coordinate.dec.deg
         self.z = z
         if cutout is None:
-            self.target.download_cutout(load_weight=True)
+            self.target.download_cutout(load_weight=True, **kwargs)
         else:
             self.target._cutout = cutout
         self._cutout = self.target.imgcutout
         self.bands = list(self.cutout.keys())
-        self.x, self.y = self.target.imgcutout['r'].coords_to_pixel(
-            self.ra, self.dec)
         sep_obj = self.target.imgcutout['r'].sep_extract(returnobjects=True)
         self.ellipses = sep_obj.get_ellipse_values().T
+        self.un_nan(self)
+
+    def update(self, **kwargs):
+        '''To redownload a cutout if size was incorrect'''
+        self.target.download_cutout(load_weight=True, **kwargs)
+        self._cutout = self.target.imgcutout
+        sep_obj = self.target.imgcutout['r'].sep_extract(returnobjects=True)
+        self.ellipses = sep_obj.get_ellipse_values().T
+        self.get_hostgalaxy()
+        self.get_hostgalaxy_params()
+
+    def un_nan(self):
+        '''Sets the NaNs data to 0 and NaNs var to 1'''
+        for band in self.bands:
+            mask = self.cutout[band].data == self.cutout[band].data
+            self.cutout[band].data[~mask] = 0
+            mask = self.cutout[band].weightimage.data\
+                == self.cutout[band].weightimage.data
+            self.cutout[band].weightimage.data[~mask] = 1
 
     # =================================================================== #
     #                               Methods                               #
@@ -117,22 +134,51 @@ class MassMeasure(object):
             return self.target.imgcutout['r'].count_to_flux(count)
 
     # ------------------------------------------------------------------- #
+    #                               SETTER                                #
+    # ------------------------------------------------------------------- #
+
+    def set_hostgalaxy(self, ind):
+        '''
+        If something goes wrong and you want to choose another HG than
+        the one determined by the DLR using self.get_hostgalaxy()
+        '''
+        self.hg_ellipse = self.ellipses[ind]
+
+    def set_septhresh(self, thresh):
+        '''
+        If something goes wrong with the sep_extract and the threshold needs to
+        be changed
+        '''
+        self.target.sep_extract(thresh=thresh)
+        self.target.set_sep()
+        self.ellipses = self.target._sep.sepobjects.get_ellipse_values().T
+
+    # ------------------------------------------------------------------- #
     #                               GETTER                                #
     # ------------------------------------------------------------------- #
 
-    def get_hostgalaxy_params(self):
+    def get_hostgalaxy(self):
+        '''Automatically detects the closest star using DLR'''
+        self.x_sn, self.y_sn = np.array(np.shape(self.cutout['r'].data))/2
+        self.DLR_list = [self.get_DLR(self.x_sn, self.y_sn,
+                                      self.ellipses[i][0], self.ellipses[i][1],
+                                      self.ellipses[i][2], self.ellipses[i][3],
+                                      self.ellipses[i][4])
+                         for i in range(len(self.ellipses))]
+        self.DLR_list = np.asarray(self.DLR_list)
+        self.minDLR = np.min(self.DLR_list[self.ellipses[:, 2] > 3])
+        hg_ind = np.where(self.DLR_list == self.minDLR)[0]
+        self.hg_ellipse = self.ellipses[hg_ind][0]
+
+    def get_hostgalaxy_params(self, scaleup=2.5):
         '''
         Gives x, y, a, b, theta of host galaxy
         determined to be the object with smallest DLR from target
         '''
-        DLR_list = [self.get_DLR(self.x, self.y,
-                                 self.ellipses[i][0], self.ellipses[i][1],
-                                 self.ellipses[i][2], self.ellipses[i][3],
-                                 self.ellipses[i][4])
-                    for i in range(len(self.ellipses))]
-        hg_ind = np.argmin(DLR_list)
-        self.hg_ellipse = self.ellipses[hg_ind]
-
+        if not hasattr(self, "hg_ellipse"):
+            raise AttributeError(
+                "No host galaxy detected yet. " +
+                "Run self.get_hostgalaxy() or set self.hg_ellipse")
         self.var_count = {band:
                           self.target.imgcutout[band].weightimage.data**(-2)
                           for band in self.bands}
@@ -140,8 +186,8 @@ class MassMeasure(object):
         counts_res = {band: sep.sum_ellipse(self.cutout[band].data,
                                             self.hg_ellipse[0],
                                             self.hg_ellipse[1],
-                                            self.hg_ellipse[2],
-                                            self.hg_ellipse[3],
+                                            2*self.hg_ellipse[2]*scaleup,
+                                            2*self.hg_ellipse[3]*scaleup,
                                             self.hg_ellipse[4],
                                             var=self.var_count[band])
                       for band in self.bands}
