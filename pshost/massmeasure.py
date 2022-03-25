@@ -51,9 +51,7 @@ class MassMeasure(object):
     mm = MassMeasure(ra, dec, z, cutout=None)
 
     mm.get_hostgalaxy_params()
-
-    # Optional:
-    mm.test_pixels(n=100)'''
+    '''
 
     # =================================================================== #
     #                               Initial                               #
@@ -158,7 +156,9 @@ class MassMeasure(object):
     # ------------------------------------------------------------------- #
 
     def get_hostgalaxy(self):
-        '''Automatically detects the closest star using DLR'''
+        '''Automatically computes each ellipse's DLR to the SN location, then
+        gives x, y, a, b, theta of host galaxy determined to be the object with
+        smallest DLR'''
         self.x_sn, self.y_sn = np.array(np.shape(self.cutout['r'].data))/2
         self.DLR_list = [self.get_DLR(self.x_sn, self.y_sn,
                                       self.ellipses[i][0], self.ellipses[i][1],
@@ -172,8 +172,8 @@ class MassMeasure(object):
 
     def get_hostgalaxy_params(self, scaleup=2.5):
         '''
-        Gives x, y, a, b, theta of host galaxy
-        determined to be the object with smallest DLR from target
+        Gives the count, flux, mag (not used) and then mass of the selected
+        host.
         '''
         if not hasattr(self, "hg_ellipse"):
             raise AttributeError(
@@ -214,6 +214,7 @@ class MassMeasure(object):
         MassEstimate_obj = get_massestimator(photopoints=[phtpt['g'],
                                                           phtpt['i']])
         MassEstimate_obj.set_target(get_target(zcmb=self.z))
+        # Gives [mass, mass_err_sown, mass_err_up]
         self.hg_mass = MassEstimate_obj.get_estimate()
 
         return self.hg_mass

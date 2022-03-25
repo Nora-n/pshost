@@ -6,3 +6,5 @@ ps_host.egg-info/
 pshost.egg-info/
 
 build/
+
+notebooks/.ipynb_checkpoints/
